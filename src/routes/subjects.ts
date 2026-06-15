@@ -3,6 +3,7 @@ import {subjects, departments} from "../db/scheme";
 import {and, desc, eq, getTableColumns, ilike, or, sql} from "drizzle-orm";
 import { db } from "../db";
 
+
 const router = express.Router();
 
 // Get all subjects with optional search, filtering and pagination
@@ -10,14 +11,13 @@ router.get("/", async (req, res) => {
     try {
         const { search, department, page = 1, limit = 10 } = req.query;
 
-        const currentPage = Math.max(1, +page);
-        const limitPerPage = Math.max(1, +limit);
+        const currentPage = Math.max(1, parseInt(String(page), 10) || 1);
+        const limitPerPage = Math.min(Math.max(1, parseInt(String(limit), 10) || 10), 100);
 
         const offset = (currentPage - 1) * limitPerPage;
 
-        const  filterConditions = [];
+        const filterConditions = [];
 
-        // if search query exist, filter bu subject name or subject code
         if (search) {
             filterConditions.push(
                 or(
@@ -28,17 +28,17 @@ router.get("/", async (req, res) => {
         }
 
         if (department) {
-            filterConditions.push(ilike(departments.name, `%${department}%`));
+            const deptPattern = `%${String(department).replace(/[%_]/g, '\\$&')}%`;
+            filterConditions.push(ilike(departments.name, deptPattern));
         }
 
-        // combine all filters using AND if any exist
         const whereClause = filterConditions.length > 0 ? and(...filterConditions) : undefined;
 
-        const countResult = await db.
-        select({ count: sql<number>`count(*)`})
+        const countResult = await db
+            .select({ count: sql<number>`cast(count(*) as integer)` })
             .from(subjects)
             .leftJoin(departments, eq(subjects.departmentId, departments.id))
-            .where(whereClause)
+            .where(whereClause);
 
         const totalCount = countResult[0]?.count ?? 0;
 
@@ -46,9 +46,11 @@ router.get("/", async (req, res) => {
             .select({
                 ...getTableColumns(subjects),
                 departments: { ...getTableColumns(departments) }
-            }).from(subjects).leftJoin(departments, eq(subjects.departmentId, departments.id))
-            .where(whereClause).
-            orderBy(desc(subjects.createdAt))
+            })
+            .from(subjects)
+            .leftJoin(departments, eq(subjects.departmentId, departments.id))
+            .where(whereClause)
+            .orderBy(desc(subjects.createdAt))
             .limit(limitPerPage)
             .offset(offset);
 
@@ -65,6 +67,6 @@ router.get("/", async (req, res) => {
         console.error(`GET /subjects error: ${e}`);
         res.status(500).json({error: 'Failed to get subjects'});
     }
-})
+});
 
 export default router;
